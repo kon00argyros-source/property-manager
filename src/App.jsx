@@ -4,6 +4,7 @@ import { Toaster } from 'sonner';
 import AppLayout from '@/components/layout/AppLayout';
 import Home from '@/pages/Home';
 import RoomPage from '@/pages/RoomPage';
+import RoomStatus from '@/pages/RoomStatus';
 import Settings from '@/pages/Settings';
 import PinLock from '@/components/PinLock';
 import { autoCreateMonthlyRent } from '@/lib/rentAutoCreate';
@@ -11,16 +12,11 @@ import { autoCreateMonthlyRent } from '@/lib/rentAutoCreate';
 export default function App() {
   const [unlocked, setUnlocked] = useState(false);
 
-  // Run auto rent creation every time app loads (after unlock)
   useEffect(() => {
-    if (unlocked) {
-      autoCreateMonthlyRent();
-    }
+    if (unlocked) autoCreateMonthlyRent();
   }, [unlocked]);
 
-  if (!unlocked) {
-    return <PinLock onUnlock={() => setUnlocked(true)} />;
-  }
+  if (!unlocked) return <PinLock onUnlock={() => setUnlocked(true)} />;
 
   return (
     <Router>
@@ -28,6 +24,7 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/" element={<Home />} />
           <Route path="/room/:roomNumber" element={<RoomPage />} />
+          <Route path="/room/:roomNumber/status" element={<RoomStatus />} />
           <Route path="/settings" element={<Settings />} />
         </Route>
         <Route path="*" element={

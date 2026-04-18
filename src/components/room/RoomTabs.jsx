@@ -3,15 +3,16 @@ import { db, supabase } from '@/lib/db';
 import { roomNamesCache } from '@/lib/roomNames';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { format, parse, isValid } from 'date-fns';
+import { format } from 'date-fns';
 import { el } from 'date-fns/locale';
 import { Card, CardContent, CardHeader, CardTitle, Badge, Button, Input, Label, Textarea } from '@/components/ui';
 import UtilityRecordCard from './UtilityRecordCard';
+import RentManageDialog from './RentManageDialog';
 import {
   Zap, Droplets, Banknote, Calendar, StickyNote,
   Plus, X, Save, User, Phone, Euro, Tag,
   Trash2, Upload, FileText, Download, File,
-  ImageIcon, FileArchive, ChevronLeft, ChevronRight
+  ImageIcon, FileArchive, Pencil, ToggleLeft, ToggleRight
 } from 'lucide-react';
 
 // ─── PowerTab ────────────────────────────────────────────────────────────────
@@ -25,10 +26,9 @@ export function PowerTab({ roomNumber, refreshKey }) {
     <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
       <Zap className="w-12 h-12 mb-4 opacity-30" />
       <p className="text-sm">Δεν υπάρχουν καταχωρήσεις ρεύματος</p>
-      <p className="text-xs mt-1">Προσθέστε ένδειξη με το κουμπί +</p>
     </div>
   );
-  return <div className="space-y-3">{records.map(r => <UtilityRecordCard key={r.id} record={r} unit="kWh" onDeleted={load} />)}</div>;
+  return <div className="space-y-3">{records.map(r => <UtilityRecordCard key={r.id} record={r} unit="kWh" onDeleted={load} onUpdated={load} />)}</div>;
 }
 
 // ─── WaterTab ────────────────────────────────────────────────────────────────
@@ -42,83 +42,89 @@ export function WaterTab({ roomNumber, refreshKey }) {
     <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
       <Droplets className="w-12 h-12 mb-4 opacity-30" />
       <p className="text-sm">Δεν υπάρχουν καταχωρήσεις νερού</p>
-      <p className="text-xs mt-1">Προσθέστε ένδειξη με το κουμπί +</p>
     </div>
   );
-  return <div className="space-y-3">{records.map(r => <UtilityRecordCard key={r.id} record={r} unit="m³" onDeleted={load} />)}</div>;
+  return <div className="space-y-3">{records.map(r => <UtilityRecordCard key={r.id} record={r} unit="m³" onDeleted={load} onUpdated={load} />)}</div>;
 }
 
 // ─── RentTab ─────────────────────────────────────────────────────────────────
-const MONTH_NAMES_GR = ['Ιαν','Φεβ','Μαρ','Απρ','Μαϊ','Ιουν','Ιουλ','Αυγ','Σεπ','Οκτ','Νοε','Δεκ'];
+const MONTH_NAMES_SHORT = ['Ιαν','Φεβ','Μαρ','Απρ','Μαϊ','Ιουν','Ιουλ','Αυγ','Σεπ','Οκτ','Νοε','Δεκ'];
 const MONTH_NAMES_FULL = ['Ιανουάριος','Φεβρουάριος','Μάρτιος','Απρίλιος','Μάιος','Ιούνιος','Ιούλιος','Αύγουστος','Σεπτέμβριος','Οκτώβριος','Νοέμβριος','Δεκέμβριος'];
 
 export function RentTab({ roomNumber, refreshKey }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
-  // Show last 12 months as tabs, current month selected
   const today = new Date();
+  const [selectedMonth, setSelectedMonth] = useState(today.getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(today.getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(today.getMonth() + 1); // 1-12
+  const [editRecord, setEditRecord] = useState(null);
+  const [showManage, setShowManage] = useState(false);
 
-  useEffect(() => {
-    db.RentPayment.filter({ room_number: roomNumber }, '-created_date').then(r => { setRecords(r); setLoading(false); });
-  }, [roomNumber, refreshKey]);
+  const load = () => db.RentPayment.filter({ room_number: roomNumber }, '-created_date').then(r => { setRecords(r); setLoading(false); });
+  useEffect(() => { load(); }, [roomNumber, refreshKey]);
 
-  if (loading) return <div className="flex justify-center py-12"><div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>;
+  const handleToggleStatus = async (record) => {
+    const today = format(new Date(), 'dd/MM/yyyy');
+    await db.RentPayment.update(record.id, {
+      is_paid: !record.is_paid,
+      paid_date: !record.is_paid ? today : null,
+    });
+    load();
+    toast.success(!record.is_paid ? 'Σημειώθηκε ως εξοφλημένο' : 'Σημειώθηκε ως ανεξόφλητο');
+  };
 
-  // Build last 12 months for tabs
+  const handleDelete = async (record) => {
+    await db.RentPayment.delete(record.id);
+    load();
+    toast.success('Η εγγραφή διαγράφηκε');
+  };
+
   const months = [];
   for (let i = 11; i >= 0; i--) {
     const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
     months.push({ month: d.getMonth() + 1, year: d.getFullYear() });
   }
 
-  // Find records for selected month/year
   const selectedRecords = records.filter(r => {
-    // Match period like "3/2026" or "3/2026 (υπόλοιπο)"
     const period = r.period || '';
     return period.startsWith(`${selectedMonth}/${selectedYear}`);
   });
 
-  const isSelected = (m) => m.month === selectedMonth && m.year === selectedYear;
   const hasUnpaid = (m) => records.some(r => (r.period || '').startsWith(`${m.month}/${m.year}`) && !r.is_paid);
   const hasPaid = (m) => records.some(r => (r.period || '').startsWith(`${m.month}/${m.year}`) && r.is_paid);
-  const hasAny = (m) => records.some(r => (r.period || '').startsWith(`${m.month}/${m.year}`));
+
+  if (loading) return <div className="flex justify-center py-12"><div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>;
 
   return (
     <div className="space-y-4">
-      {/* Month tabs - scrollable */}
+      {/* Month tabs */}
       <div className="overflow-x-auto pb-1">
         <div className="flex gap-2 min-w-max">
-          {months.map((m) => (
-            <button
-              key={`${m.month}-${m.year}`}
+          {months.map(m => (
+            <button key={`${m.month}-${m.year}`}
               onClick={() => { setSelectedMonth(m.month); setSelectedYear(m.year); }}
-              className={cn(
-                "flex flex-col items-center px-3 py-2 rounded-xl text-xs font-medium transition-all border min-w-[56px]",
-                isSelected(m)
+              className={cn("flex flex-col items-center px-3 py-2 rounded-xl text-xs font-medium transition-all border min-w-[56px]",
+                m.month === selectedMonth && m.year === selectedYear
                   ? "bg-primary text-primary-foreground border-primary shadow-md"
-                  : "bg-card border-border hover:bg-secondary/60"
-              )}
-            >
-              <span>{MONTH_NAMES_GR[m.month - 1]}</span>
+                  : "bg-card border-border hover:bg-secondary/60")}>
+              <span>{MONTH_NAMES_SHORT[m.month - 1]}</span>
               <span className="opacity-70">{String(m.year).slice(2)}</span>
               <div className="mt-1 flex gap-0.5">
                 {hasUnpaid(m) && <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" />}
                 {hasPaid(m) && <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />}
-                {!hasAny(m) && <span className="w-1.5 h-1.5 rounded-full bg-gray-300 inline-block" />}
               </div>
             </button>
           ))}
         </div>
       </div>
 
-      {/* Selected month title */}
-      <h3 className="text-sm font-semibold text-muted-foreground">
-        {MONTH_NAMES_FULL[selectedMonth - 1]} {selectedYear}
-      </h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-muted-foreground">{MONTH_NAMES_FULL[selectedMonth - 1]} {selectedYear}</h3>
+        <Button size="sm" onClick={() => { setEditRecord(null); setShowManage(true); }}>
+          <Plus className="w-4 h-4 mr-1" /> Νέα Εγγραφή
+        </Button>
+      </div>
 
-      {/* Records for selected month */}
       {selectedRecords.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-10 text-muted-foreground border-2 border-dashed border-border rounded-xl">
           <Banknote className="w-10 h-10 mb-3 opacity-20" />
@@ -129,33 +135,53 @@ export function RentTab({ roomNumber, refreshKey }) {
           {selectedRecords.map(record => (
             <Card key={record.id} className={cn("border-l-4", record.is_paid ? "border-l-green-500" : "border-l-red-500")}>
               <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <p className="font-medium text-sm">{record.period}</p>
-                  <div className="text-right">
-                    <p className="font-semibold">€{record.amount?.toFixed(2)}</p>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm">{record.period}</p>
                     {record.original_amount && record.original_amount !== record.amount && (
                       <p className="text-xs text-muted-foreground">από €{record.original_amount?.toFixed(2)}</p>
                     )}
-                    <Badge variant="secondary" className={cn("text-xs mt-1", record.is_paid ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700")}>
-                      {record.is_paid ? '✓ Εξοφλήθηκε' : '✗ Ανεξόφλητο'}
-                    </Badge>
+                    {record.partial_notes && <p className="text-xs text-orange-600 mt-1">{record.partial_notes}</p>}
+                    {record.is_paid && record.paid_date && (
+                      <div className="flex items-center gap-1 mt-1 text-xs text-green-600">
+                        <Calendar className="w-3 h-3" /> {record.paid_date}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="text-right">
+                      <p className="font-semibold">€{record.amount?.toFixed(2)}</p>
+                      <Badge variant="secondary" className={cn("text-xs mt-1", record.is_paid ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700")}>
+                        {record.is_paid ? '✓ Εξοφλήθηκε' : '✗ Ανεξόφλητο'}
+                      </Badge>
+                    </div>
                   </div>
                 </div>
-                {record.partial_notes && (
-                  <p className="text-xs text-orange-600 dark:text-orange-400 mt-2 bg-orange-50 dark:bg-orange-900/20 rounded p-2">{record.partial_notes}</p>
-                )}
-                {record.is_paid && record.paid_date && (
-                  <div className="flex items-center gap-1 mt-2 text-xs text-green-600">
-                    <Calendar className="w-3 h-3" /> Πληρώθηκε {record.paid_date}
-                  </div>
-                )}
+                {/* Action buttons */}
+                <div className="flex gap-2 mt-3 pt-3 border-t border-border">
+                  <button onClick={() => handleToggleStatus(record)}
+                    className={cn("flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition-all",
+                      record.is_paid
+                        ? "bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20"
+                        : "bg-green-50 text-green-600 hover:bg-green-100 dark:bg-green-900/20")}>
+                    {record.is_paid ? <><ToggleLeft className="w-3.5 h-3.5" /> Αλλαγή σε Ανεξόφλητο</> : <><ToggleRight className="w-3.5 h-3.5" /> Αλλαγή σε Εξοφλημένο</>}
+                  </button>
+                  <button onClick={() => { setEditRecord(record); setShowManage(true); }}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-secondary rounded-lg text-xs hover:bg-secondary/80 transition-all">
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => handleDelete(record)}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-red-50 dark:bg-red-900/20 text-red-600 rounded-lg text-xs hover:bg-red-100 transition-all">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </CardContent>
             </Card>
           ))}
         </div>
       )}
 
-      {/* All records summary */}
+      {/* Summary */}
       {records.length > 0 && (
         <div className="pt-2 border-t border-border">
           <p className="text-xs text-muted-foreground mb-2 font-medium">Σύνοψη</p>
@@ -165,6 +191,14 @@ export function RentTab({ roomNumber, refreshKey }) {
           </div>
         </div>
       )}
+
+      <RentManageDialog
+        open={showManage}
+        onClose={() => { setShowManage(false); setEditRecord(null); }}
+        roomNumber={roomNumber}
+        record={editRecord}
+        onSaved={load}
+      />
     </div>
   );
 }
@@ -183,16 +217,13 @@ export function NotesTab({ roomNumber, refreshKey }) {
   const handleAdd = async () => {
     if (!noteText.trim()) return;
     await db.RoomNote.create({ room_number: roomNumber, text: noteText });
-    setNoteText(''); setShowForm(false);
-    load();
+    setNoteText(''); setShowForm(false); load();
     toast.success('Η σημείωση αποθηκεύτηκε');
   };
 
   const handleDelete = async (id) => {
     if (deletingId !== id) { setDeletingId(id); setTimeout(() => setDeletingId(null), 3000); return; }
-    await db.RoomNote.delete(id);
-    load();
-    setDeletingId(null);
+    await db.RoomNote.delete(id); load(); setDeletingId(null);
     toast.success('Η σημείωση διαγράφηκε');
   };
 
@@ -219,15 +250,9 @@ export function NotesTab({ roomNumber, refreshKey }) {
         <Card key={note.id}><CardContent className="p-4">
           <div className="flex items-start justify-between gap-3">
             <p className="text-sm whitespace-pre-wrap flex-1">{note.text}</p>
-            <button
-              onClick={() => handleDelete(note.id)}
-              className={cn(
-                "shrink-0 p-1.5 rounded-lg transition-all",
-                deletingId === note.id
-                  ? "bg-red-500 text-white animate-pulse text-xs px-2"
-                  : "text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
-              )}
-            >
+            <button onClick={() => handleDelete(note.id)}
+              className={cn("shrink-0 p-1.5 rounded-lg transition-all",
+                deletingId === note.id ? "bg-red-500 text-white animate-pulse text-xs px-2" : "text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20")}>
               {deletingId === note.id ? 'Σίγουρα;' : <Trash2 className="w-4 h-4" />}
             </button>
           </div>
@@ -246,12 +271,11 @@ const getFileIcon = (name) => {
   if (['zip','rar','7z'].includes(ext)) return <FileArchive className="w-5 h-5 text-yellow-500" />;
   return <File className="w-5 h-5 text-gray-500" />;
 };
-
 const formatBytes = (bytes) => {
   if (!bytes) return '';
   if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/(1024*1024)).toFixed(1) + ' MB';
 };
 
 export function FilesTab({ roomNumber, refreshKey }) {
@@ -266,10 +290,9 @@ export function FilesTab({ roomNumber, refreshKey }) {
     setLoading(true);
     const { data, error } = await supabase.storage.from('room-files').list(folder, { sortBy: { column: 'created_at', order: 'desc' } });
     if (error) { console.error(error); setLoading(false); return; }
-    setFiles(data || []);
+    setFiles((data || []).filter(f => !f.name.startsWith('meter_')));
     setLoading(false);
   };
-
   useEffect(() => { load(); }, [roomNumber, refreshKey]);
 
   const handleUpload = async (e) => {
@@ -277,27 +300,16 @@ export function FilesTab({ roomNumber, refreshKey }) {
     if (!file) return;
     setUploading(true);
     const safeName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-    const path = `${folder}/${safeName}`;
-    const { error } = await supabase.storage.from('room-files').upload(path, file);
-    if (error) { toast.error('Σφάλμα κατά την ανάρτηση'); console.error(error); }
-    else { toast.success(`Το αρχείο "${file.name}" ανέβηκε`); load(); }
-    setUploading(false);
-    e.target.value = '';
-  };
-
-  const handleDownload = async (fileName) => {
-    const { data } = supabase.storage.from('room-files').getPublicUrl(`${folder}/${fileName}`);
-    window.open(data.publicUrl, '_blank');
+    const { error } = await supabase.storage.from('room-files').upload(`${folder}/${safeName}`, file);
+    if (error) toast.error('Σφάλμα κατά την ανάρτηση');
+    else { toast.success(`Το αρχείο ανέβηκε`); load(); }
+    setUploading(false); e.target.value = '';
   };
 
   const handleDelete = async (fileName) => {
-    if (deletingPath !== fileName) {
-      setDeletingPath(fileName);
-      setTimeout(() => setDeletingPath(null), 3000);
-      return;
-    }
+    if (deletingPath !== fileName) { setDeletingPath(fileName); setTimeout(() => setDeletingPath(null), 3000); return; }
     const { error } = await supabase.storage.from('room-files').remove([`${folder}/${fileName}`]);
-    if (error) { toast.error('Σφάλμα κατά τη διαγραφή'); }
+    if (error) toast.error('Σφάλμα κατά τη διαγραφή');
     else { toast.success('Το αρχείο διαγράφηκε'); load(); }
     setDeletingPath(null);
   };
@@ -306,60 +318,38 @@ export function FilesTab({ roomNumber, refreshKey }) {
 
   return (
     <div className="space-y-4">
-      {/* Upload button */}
       <div className="flex justify-end">
         <input ref={fileInputRef} type="file" className="hidden" onChange={handleUpload} />
         <Button onClick={() => fileInputRef.current?.click()} disabled={uploading} size="sm">
-          <Upload className="w-4 h-4 mr-2" />
-          {uploading ? 'Ανάρτηση...' : 'Ανέβασμα Αρχείου'}
+          <Upload className="w-4 h-4 mr-2" />{uploading ? 'Ανάρτηση...' : 'Ανέβασμα Αρχείου'}
         </Button>
       </div>
-
-      {/* Drop zone when empty */}
       {files.length === 0 ? (
-        <div
-          className="flex flex-col items-center justify-center py-16 text-muted-foreground border-2 border-dashed border-border rounded-xl cursor-pointer hover:bg-secondary/30 transition-colors"
-          onClick={() => fileInputRef.current?.click()}
-        >
+        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground border-2 border-dashed border-border rounded-xl cursor-pointer hover:bg-secondary/30 transition-colors" onClick={() => fileInputRef.current?.click()}>
           <Upload className="w-12 h-12 mb-4 opacity-30" />
           <p className="text-sm font-medium">Δεν υπάρχουν αρχεία</p>
-          <p className="text-xs mt-1">Κλικ για ανέβασμα αρχείου</p>
+          <p className="text-xs mt-1">Κλικ για ανέβασμα</p>
         </div>
       ) : (
         <div className="space-y-2">
           {files.map(file => (
-            <Card key={file.name}>
-              <CardContent className="p-3 flex items-center gap-3">
-                <div className="shrink-0">{getFileIcon(file.name)}</div>
-                <div className="flex-1 min-w-0">
-                  {/* Remove timestamp prefix for display */}
-                  <p className="text-sm font-medium truncate">{file.name.replace(/^\d+_/, '')}</p>
-                  {file.metadata?.size && (
-                    <p className="text-xs text-muted-foreground">{formatBytes(file.metadata.size)}</p>
-                  )}
-                </div>
-                <div className="flex gap-1 shrink-0">
-                  <button
-                    onClick={() => handleDownload(file.name)}
-                    className="p-2 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
-                    title="Άνοιγμα/Λήψη"
-                  >
-                    <Download className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(file.name)}
-                    className={cn(
-                      "p-2 rounded-lg transition-all text-xs",
-                      deletingPath === file.name
-                        ? "bg-red-500 text-white animate-pulse px-3"
-                        : "text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
-                    )}
-                  >
-                    {deletingPath === file.name ? 'Σίγουρα;' : <Trash2 className="w-4 h-4" />}
-                  </button>
-                </div>
-              </CardContent>
-            </Card>
+            <Card key={file.name}><CardContent className="p-3 flex items-center gap-3">
+              <div className="shrink-0">{getFileIcon(file.name)}</div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{file.name.replace(/^\d+_/, '')}</p>
+                {file.metadata?.size && <p className="text-xs text-muted-foreground">{formatBytes(file.metadata.size)}</p>}
+              </div>
+              <div className="flex gap-1 shrink-0">
+                <button onClick={() => { const { data } = supabase.storage.from('room-files').getPublicUrl(`${folder}/${file.name}`); window.open(data.publicUrl, '_blank'); }}
+                  className="p-2 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all">
+                  <Download className="w-4 h-4" />
+                </button>
+                <button onClick={() => handleDelete(file.name)}
+                  className={cn("p-2 rounded-lg transition-all text-xs", deletingPath === file.name ? "bg-red-500 text-white animate-pulse px-3" : "text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20")}>
+                  {deletingPath === file.name ? 'Σίγουρα;' : <Trash2 className="w-4 h-4" />}
+                </button>
+              </div>
+            </CardContent></Card>
           ))}
         </div>
       )}
@@ -378,8 +368,7 @@ export function RoomInfoTab({ room, onUpdate }) {
     setSaving(true);
     if (room?.id) { await db.Room.update(room.id, form); await roomNamesCache.load(); }
     toast.success('Οι αλλαγές αποθηκεύτηκαν');
-    onUpdate();
-    setSaving(false);
+    onUpdate(); setSaving(false);
   };
   return (
     <div className="space-y-6">
@@ -389,7 +378,6 @@ export function RoomInfoTab({ room, onUpdate }) {
           <div className="space-y-2">
             <Label>Προσαρμοσμένο Όνομα</Label>
             <Input value={form.room_name} onChange={e => setForm({ ...form, room_name: e.target.value })} placeholder={`Δωμάτιο ${room?.room_number} (προεπιλογή)`} />
-            <p className="text-xs text-muted-foreground">Αφήστε κενό για "Δωμάτιο {room?.room_number}"</p>
           </div>
         </CardContent>
       </Card>
